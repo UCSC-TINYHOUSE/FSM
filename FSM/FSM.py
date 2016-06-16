@@ -1,10 +1,13 @@
 # Skeleton for a FSM
-#Last edited 4/13 11:20 A.M
+# Last edited 5/8 8:55 P.M
 
 from random import randint
 from time import clock
-from time import gmtime, strftime
-from binascii import a2b_qp,hexlify
+from time import gmtime, strftime, sleep
+from datetime import datetime
+from binascii import a2b_qp, hexlify
+from ts7250v2 import DIO
+from serial import Serial
 
 ##==================================================================
 ##Transitions
@@ -24,25 +27,45 @@ global December
 global HIGH
 global LOW
 
-#global DesiredNextState
+# global DesiredNextState
 
-January=1
-April=4
-May=5
-July=7
-October=10
-December=12
+January = 1
+April = 4
+May = 5
+July = 7
+October = 10
+December = 12
 
-currentime=strftime("%m-%d %H:%M:%S")
-month=int(currentime[0:2])
-day=int(currentime[3:5])
-hour=int(currentime[6:8])
-minute=int(currentime[9:11])
+d = DIO()
 
-HIGH=1
-LOW=0
+currentime = strftime("%m-%d %H:%M:%S")
+month = int(currentime[0:2])
+day = int(currentime[3:5])
+hour = int(currentime[6:8])
+minute = int(currentime[9:11])
 
-#DesiredNextState=""
+HIGH = 1
+LOW = 0
+
+d.DIO_set_output("DIO_01") #for the mate3
+d.DIO_set_output("DIO_03") #for sw1 on top level
+d.DIO_set_output("DIO_05") #for sw2 on top level
+d.DIO_set_output("DIO_07") # relay to handle surge current on bat side
+d.DIO_set_output("DIO_09") # relay after buck converter
+d.DIO_set_output("DIO_11") # relay to handle surge current on inveter side
+d.DIO_set_output("DIO_13") # short from battery to inverter.
+d.DIO_set_output("PC104_A31")
+d.DIO_set_output("PC104_C18")
+
+d.DIO_set_high("DIO_01")
+d.DIO_set_high("DIO_11")
+d.DIO_set_low("DIO_03")
+d.DIO_set_low("DIO_05")
+d.DIO_set_low("DIO_07")
+d.DIO_set_low("PC104_A31")
+d.DIO_set_low("PC104_C18")
+
+# DesiredNextState=""
 
 
 """This class takes in a toState which is the string that says what state is next.
@@ -51,33 +74,120 @@ It has 2 functions. One does the actual transitioning, and an execute to visuall
 
 *__init__ has
 """
+
+def Read_Switch():
+    switch=d.DIO_read("DIO_05")
+    switch=int(switch)
+    if switch==1:
+        d.DIO_set_high("DIO_07")
+        print "pin 7 is high"
+    elif switch==0:
+        d.DIO_set_low("DIO_07")
+        print "pin 7 is low"
+    else:
+        print "It didn't work"
+def Switch_0(state):
+    if state == "ON":
+        d.DIO_set_high("DIO_01")
+    else:
+        d.DIO_set_low("DIO_01")
+
+
+def Switch_1(state):  # rectifier switch
+    if state == "ON":
+        d.DIO_set_high("DIO_03")
+    else:
+        d.DIO_set_low("DIO_03")
+
+
+def Switch_2(state):
+    if state == "ON":
+        d.DIO_set_high("DIO_05")
+    else:
+        d.DIO_set_low("DIO_05")
+
+
+def Switch_3(state):
+    if state == "ON":
+        d.DIO_set_high("DIO_07")
+    else:
+        d.DIO_set_low("DIO_07")
+
+
 def ASCII2BI(message):
-    x=[]
-    counter=0
-    message_length=int(len(message))
-    bi_code= bin(int(hexlify(message), 16))
-    while counter!=message_length:
-        x.append(bi_code[((message_length-1-counter)*8) : ((message_length-counter)*8)])
-        counter+=1
+    x = []
+    counter = 0
+    message_length = int(len(message))
+    bi_code = bin(int(hexlify(message), 16))
+    while counter != message_length:
+        x.append(bi_code[((message_length - 1 - counter) * 8): ((message_length - counter) * 8)])
+        counter += 1
     x.reverse()
     return x
+
+
+def ReadMate3():
+    s = Serial("/dev/outback", 19200)
+    x = s
+    s.flushOutput()
+    s.flushInput()
+    a = x.read(80)
+    # sleep(0.5)
+    return a
+
+def ReadMidnite():
+    s = Serial("/dev/midnite", 9600)
+    x = s
+    s.flushOutput()
+    s.flushInput()
+    a = x.read(40)
+    # sleep(0.5)
+    return a
+
 
 def Battery_Life():
     """Psuedo-code:
             1) Read bits(37:40) of mate3 USB
             2) if above certain threshold return True
                 if not return False
+            3) This function is a bit of a misnomer, it should be labeled Bus_Voltage()
     """
-    if randint(1, 50) >= 20:
+    second = int(strftime("%S"))
+
+    #voltage = int((ReadMate3()[64:67]))
+    #voltage = float(voltage)
+    #voltage = voltage / 10
+    #print voltage
+
+    if second >= 0:
         return HIGH
     else:
         return LOW
+
+
 def GRID_HEALTHY():
     """ This will read bits(16:20) of the mate 3 USB"""
-    if randint(1, 50) >= 20:
+    second = int(strftime("%S"))
+    # if DesiredNextState == "toState_6":
+    gridV = (ReadMate3()[42:45])
+    gridV.replace(',', '')
+    gridV=int(gridV)
+    print "Grid Voltage: %s V" % gridV
+    if gridV >=100:
         return HIGH
     else:
+        #d.DIO_set_high("DIO_03")
+        #d.DIO_set_high("DIO_05")
+        #d.DIO_set_low("DIO_07")#sw3 opened
+        #sleep(2)
+        #d.DIO_set_high("DIO_07")  # sw3 closed
+        DesiredNextState = "toState_3"
+        FSM1.ToTransition("toState_3")
         return LOW
+        # if second >=30:
+        # return LOW
+        # else:
+        # return HIGH
 
 
 class Transition(object):
@@ -124,49 +234,61 @@ class State(object):  # defines a state. Classes are analogous to "structs" in C
     def __init__(self, FSM):  # initializes all state objects we create
         self.FSM = FSM
         self.timer = 0
-        self.myTimer =0
+        self.myTimer = 0
         self.startTime = 0
 
-
     def Enter(self):  # if the command"
-       # self.timer = randint(0, 5)
-        #self.startTime = int(clock())
+        # self.timer = randint(0, 5)
+        # self.startTime = int(clock())
         print currentime
-        print ASCII2BI('297')
+        print ASCII2BI('23343435A297')[3]
 
     def Execute(self):
+
         global DesiredNextState
         DesiredNextState = ''
+        hour = int(strftime("%H"))
+        minute = int(strftime("%M"))
+        second= int(strftime("%S"))
+        print minute
+        minute=minute%2
+        #Read_Switch()
 
+        # s = Serial("/dev/ttyACM0", 19200)
+        # a=s.read(80)
+        # print a
+        # print '%s:%s:%s' % (now.hour, now.minute, now.second)
+        # print hour
         if GRID_HEALTHY() == 0:
-            print "Islanding"
-            DesiredNextState="toState_3"
-            #FSM1.ToTransition("toState_3")
+            DesiredNextState = "toState_3"
+            FSM1.ToTransition("toState_3")
 
-        elif (month>=May and month<=October):
+        elif (month >= May and month <= October):
             print "It's Summer"
-            if(hour==17 and Battery_Life()): #if it's 5:00 to 5:59(17=5pm)
-                DesiredNextState="toState_5"
-                #FSM1.ToTransition("toState_5")
+            print second
+            if (second>=30 and Battery_Life()):  # if it's 5:00 to 5:59(17=5pm)
+                DesiredNextState = "toState_5"
+                # FSM1.ToTransition("toState_5")
             else:
-                DesiredNextState="toState_6"
-                #FSM1.ToTransition("toState_6")
-        elif((month>October and month<=December) or (month>=January and month<=April)):
+                DesiredNextState = "toState_6"
+                # FSM1.ToTransition("toState_6")
+        elif ((month > October and month <= December) or (month >= January and month <= April)):
             print "It's Winter"
-            if((hour==9) and Battery_Life()): # time is 9:00-9:30
+            if ((hour == 9) and Battery_Life()):  # time is 9:00-9:30
                 print "PG&E is $$$ and we have enough BAT"
-                DesiredNextState="toState_5"
-                #FSM1.ToTransition("toState_5")
+                DesiredNextState = "toState_5"
+                # FSM1.ToTransition("toState_5")
             else:
                 print "PG&E is not $$$ or bat is too low"
-                DesiredNextState="toState_6"
-                #FSM1.ToTransition("toState_6")
+                DesiredNextState = "toState_6"
+                # FSM1.ToTransition("toState_6")
         else:
             print "battery is too low"
             FSM1.ToTransition("toState_6")
 
     def Exit(self):
         pass
+
 
 """
 Skeleton state
@@ -197,6 +319,8 @@ This can be done for as many states as are necessary.
 Make sure these get defined in the FSM later, or else they will never be used!
 
 """
+
+
 class State_0(State):
     def __init__(self, FSM):
         super(State_0, self).__init__(FSM)
@@ -207,7 +331,7 @@ class State_0(State):
 
     def Execute(self):
         print "Executing State_0"
-        super(State_0,self).Execute()
+        super(State_0, self).Execute()
         FSM1.ToTransition("toState_6")
 
     def Exit(self):
@@ -220,12 +344,18 @@ class State_1(State):
 
     def Enter(self):
         print "Entered State_1"
+        d.DIO_set_high("DIO_01")
+        FSM1.ToTransition("toState_6")
         super(State_1, self).Enter()
 
     def Execute(self):
         print "Executing State 1"
+        d.DIO_set_high("DIO_03")
+        d.DIO_set_low("DIO_05")
+        d.DIO_set_high("DIO_01")
         super(State_1, self).Execute()
         FSM1.ToTransition("toState_6")
+
     def Exit(self):
         print "Exiting State_1"
 
@@ -253,16 +383,45 @@ class State_3(State):
 
     def Enter(self):
         print "Entered State_3"
+        d.DIO_set_low("DIO_01")  # recifier
+        d.DIO_set_low("DIO_07")  # sw3 opened
+
+        d.DIO_set_high("DIO_13")  # relay to handle surge current on inveter side
+
+        d.DIO_set_low("DIO_03")  # sw1 opened
+        d.DIO_set_high("DIO_05")  # sw2 closed
+        d.DIO_set_low("DIO_09")  # relay for buck converter
+
+        sleep(1.0)  # handles surge current and then short 3 Ohm resistor load #used to be 2
+        d.DIO_set_high("DIO_07")  # sw3 closed
+        print "Soft start switch is closed"
+        sleep(1.0)  # used to be 2
+        d.DIO_set_high("DIO_09")  # closes buck converter(4 sec total)
+        #sleep(5)  # timer for rectifer(total 9sec)
         super(State_3, self).Enter()
 
     def Execute(self):
-        print "Executing State_3"
+        #sleep(5)
         while DesiredNextState == "toState_3":
+            d.DIO_set_low("DIO_01")
+            #d.DIO_set_high("DIO_03") #sw1
+            d.DIO_set_high("DIO_05") #sw2
+            #sleep(3)
+            #d.DIO_set_high("DIO_07") #switch to short resistor that handles surge current
+            #print ReadMate3()
+            Battery_Life()
+            print "Executing State_3/Islanding"
             super(State_3, self).Execute()
         FSM1.ToTransition(DesiredNextState)
         # example transitions using the time which was made in the enter condition
 
     def Exit(self):
+        d.DIO_set_low("DIO_01")
+        d.DIO_set_low("DIO_05")
+        d.DIO_set_low("DIO_07")
+        d.DIO_set_low("DIO_13")
+        sleep(0.5)
+        #d.DIO_set_low("PC104_C18")
         print "Exiting State_3"
 
 
@@ -291,17 +450,56 @@ class State_5(State):
     def Enter(self):
         print "Entered State_5"
         super(State_5, self).Enter()
+        d.DIO_set_high("DIO_01") #recifier
+        d.DIO_set_low("DIO_07")  # sw3 opened
+
+        d.DIO_set_low("DIO_03")# sw1 opened
+        d.DIO_set_high("DIO_05")# sw2 closed
+        d.DIO_set_low("DIO_09") #relay for buck converter
+
+        sleep(0.5) #handles surge current and then short 3 Ohm resistor load #used to be 2
+        d.DIO_set_high("DIO_07")  # sw3 closed
+        print "Soft start switch is closed"
+        sleep(1.5) #used to be 2
+        d.DIO_set_high("DIO_09")  # closes buck converter(4 sec total)
+        sleep(6) #timer for rectifer(total 9sec)
+        second = int(strftime("%S"))
+        minute = int(strftime("%M"))
 
     def Execute(self):
-        print "Executing State_5"
         # example transitions using the time which was made in the enter condition
+        d.DIO_set_low("DIO_01")
         while DesiredNextState == "toState_5":
+            d.DIO_set_low("DIO_03")
+            d.DIO_set_high("DIO_05")
+
+            d.DIO_set_low("DIO_01")
+            d.DIO_set_high("DIO_07")
+            print "Executing State_5"
             super(State_5, self).Execute()
         FSM1.ToTransition(DesiredNextState)
 
     def Exit(self):
+        if DesiredNextState == "toState_5":
+            d.DIO_set_high("DIO_05")
+            d.DIO_set_low("DIO_03")
+        elif(DesiredNextState == 'toState_6'):
+            #d.DIO_set_low("DIO_03")
+            #d.DIO_set_low("DIO_05")
+            d.DIO_set_high("DIO_09")
+            d.DIO_set_high("DIO_07")
+            #print "ALL RELAYS ARE OFF CAMERON"
+            #sleep(2)
+        elif(DesiredNextState == 'toState_3'):
+            d.DIO_set_low("DIO_03")
+            d.DIO_set_low("DIO_05")
+            d.DIO_set_low("DIO_09")
+            d.DIO_set_low("DIO_07")
+            print "ALL RELAYS ARE OFF CAMERON"
+            sleep(1)
+        Switch_1("OFF")
         print "Exiting State_5"
-
+        print ReadMate3()
 
 class State_6(State):
     def __init__(self, FSM):
@@ -309,21 +507,66 @@ class State_6(State):
 
     def Enter(self):
         print "Entered State_6"
+        d.DIO_set_high("DIO_01")
+        d.DIO_set_high("DIO_09")
+        d.DIO_set_low('DIO_05')
+        d.DIO_set_high("DIO_03")
+
+        d.DIO_set_low("DIO_07")
+        #d.DIO_set_high('PC104_A31')
+        sleep(10)
         super(State_6, self).Enter()
 
     def Execute(self):
         print "Executing State_6"
-        while DesiredNextState=="toState_6":
-            super(State_6, self).Execute()
-        if DesiredNextState == 'toState_3':
-            print "About to go from S6 to S3" #this is where i will include code that changes state of switches.
+        d.DIO_set_high("DIO_09")
+        second = int(strftime("%S"))
+        minute = int(strftime("%M"))
+        while DesiredNextState == "toState_6":
+            d.DIO_set_low("DIO_01")
 
+            d.DIO_set_low("DIO_05")
+            d.DIO_set_high("DIO_03")
+
+            print "Executing State_6"
+            super(State_6, self).Execute()
+            #GRID_HEALTHY()
+            print ReadMate3()
+            #print ReadMidnite()
+            Battery_Life()
+        if DesiredNextState == 'toState_3':
+            print "About to go from S6 to S3"  # this is where i will include code that changes state of switches.
+            d.DIO_set_low("DIO_07")
+            d.DIO_set_low("DIO_03")
+            d.DIO_set_high("DIO_05")
+            d.DIO_set_high("DIO_13")  # relay to handle surge current on inveter side
+            #d.DIO_set_high("DIO_03")
+            #d.DIO_set_high("DIO_05")
+            #d.DIO_set_low("DIO_07")
         # example transitions using the time which was made in the enter condition
         FSM1.ToTransition(DesiredNextState)
 
     def Exit(self):
+        d.DIO_set_low("DIO_01")
         print "Exiting State_6"
-
+        if DesiredNextState == 'toState_3':
+            d.DIO_set_low("DIO_07")
+            d.DIO_set_low("DIO_03")
+            d.DIO_set_high("DIO_05")
+            d.DIO_set_high("DIO_13")  # relay to handle surge current on inveter side
+        elif(DesiredNextState == 'toState_5'):
+            d.DIO_set_low("DIO_03")
+            d.DIO_set_low("DIO_05")
+            d.DIO_set_low("DIO_09")
+            print "ALL RELAYS ARE OFF CAMERON"
+            sleep(1) #CHANGED FROM 2 8:20pm
+        else:
+            d.DIO_set_low("DIO_03")
+            d.DIO_set_low("DIO_07")
+            d.DIO_set_high("DIO_05")
+            d.DIO_set_low('PC104_A31')
+            d.DIO_set_high("DIO_07")
+            print ReadMate3()
 
 class State_7(State):
     def __init__(self, FSM):
@@ -388,6 +631,7 @@ The FSM is completely defined in this class, and everything you need to step bet
 *Outside of this if statement we execute the Execute() function of the current state. So we execute() the state regardless of transition
 """
 
+
 class FSM(object):
     def __init__(self, charachter):
         self.char = charachter
@@ -429,9 +673,7 @@ Other than the fact that it is an oject. So we have a Char superclass, which inh
 This is mostly to clean up the code, and know that this class is used to charachterize the FSM.
 """
 
-Char = type("Char",(object,),{})
-
-
+Char = type("Char", (object,), {})
 
 """
 This is a weird problem I have not yet solved. Usually this would be defined inside of the FSMApplication class,
@@ -439,7 +681,7 @@ But for some reason the code breaks at that point. It has something to do with u
 My solution is to make the FSM class instance a global variable, instead of self contained, and this solves the problem.
 As of now no problems have risen.
 """
-FSM1=FSM(Char)
+FSM1 = FSM(Char)
 
 """
 In this class you charachterize the FSM, by defining the transitions, and the states.
@@ -498,4 +740,3 @@ if __name__ == '__main__':
     while (1):
         s.Execute()
         pass
-
