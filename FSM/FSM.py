@@ -1,5 +1,5 @@
 # Skeleton for a FSM
-# Last edited 5/8 8:55 P.M
+# Last edited 5/8 8:55 P.M by Nikhil Jain
 
 from random import randint
 from time import clock
